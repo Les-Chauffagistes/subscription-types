@@ -36,7 +36,7 @@ jobs:
           venv/bin/datamodel-codegen \
             --input schema/api.yaml \
             --input-file-type openapi \
-            --output python/shared_types/models.py
+            --output python/subscription_types/models.py
 
       - name: Generate TypeScript types
         run: |
