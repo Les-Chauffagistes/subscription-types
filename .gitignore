@@ -1,6 +1,5 @@
 node_modules/
 generated/
 generate.sh
-package*.json
 venv/
 requirements.txt
