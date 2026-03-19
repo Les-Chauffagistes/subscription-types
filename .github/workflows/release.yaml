@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: [macOS, self-hosted]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deps
+        run: |
+          pip install datamodel-code-generator build
+          npm ci
+
+      - name: Generate Python models
+        run: |
+          mkdir -p python/shared_types/
+          datamodel-codegen \
+            --input schema/api.yaml \
+            --input-file-type openapi \
+            --output python/shared_types/models.py
+
+      - name: Generate TypeScript types
+        run: |
+          mkdir -p typescript/src/
+          npx openapi-typescript schema/api.yaml \
+            -o typescript/src/types.ts
+
+      - name: Build Python package
+        run: |
+          cd python
+          python -m build
+
+      - name: Pack TypeScript
+        run: |
+          cd typescript
+          npm pack
+
+      - name: Compute version
+        id: version
+        run: |
+          latest_tag=$(git tag --list 'v*.*.*' --sort=-version:refname | head -n 1)
+          current=${latest_tag:-v0.0.0}
+
+          commits=$(git log ${latest_tag}..HEAD --pretty=%s)
+
+          major=0
+          minor=0
+
+          while read -r line; do
+            if echo "$line" | grep -qE "BREAKING CHANGE|!:"; then
+              major=1
+            elif echo "$line" | grep -q "^feat:"; then
+              minor=1
+            fi
+          done <<< "$commits"
+
+          version=${current#v}
+          IFS='.' read -r x y z <<< "$version"
+
+          if [ "$major" -eq 1 ]; then
+            x=$((x+1)); y=0; z=0
+          elif [ "$minor" -eq 1 ]; then
+            y=$((y+1)); z=0
+          else
+            z=$((z+1))
+          fi
+
+          new_version="v$x.$y.$z"
+
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+          echo "VERSION=$new_version" >> $GITHUB_ENV
+
+      - name: Check tag exists
+        run: |
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag already exists"
+            exit 0
+          fi
+
+      - name: Create tag
+        run: |
+          git tag $VERSION
+          git push origin $VERSION
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          files: |
+            python/dist/*
+            typescript/*.tgz
